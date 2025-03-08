@@ -23,9 +23,9 @@ import numpy as np
 import open3d as o3d
 
 # --- Configuration Parameters ---
-HAND_KEYPOINTS_FOLDER = "/home/archer/CERD_Model/hamer/demo_out/joints_npy"
-OBJECT_PLY_FOLDER = "/home/archer/CERD_Model/dataset/pour_water_02/point_clouds"
-OUTPUT_CSV = "/home/archer/CERD_Model/dataset/pour_water_02/grasp.csv"
+HAND_KEYPOINTS_FOLDER = "/home/archer/code/CERD_Model/dataset/pour_water_02/hand/joints_npy"
+OBJECT_PLY_FOLDER = "/home/archer/code/CERD_Model/dataset/pour_water_02/point_clouds"
+OUTPUT_CSV = "/home/archer/code/CERD_Model/dataset/pour_water_02/grasp.csv"
 
 # Distance threshold (in mm) for deciding a "grasp" based on the distance between centroids.
 DIST_THRESH = 65

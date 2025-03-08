@@ -1,5 +1,3 @@
-# Saving PNG RGB images from the left and right camera, PNG depth map of the ZED stereo camera for each key frame
-
 import os
 import cv2
 import pyzed.sl as sl
@@ -36,9 +34,6 @@ def main():
 
     # Set configuration parameters
     init_params = sl.InitParameters()
-    # Depending on your SDK version, you might need:
-    # init_params.input.set_from_svo_file(svo_file_path)
-    # or the following (if your SDK supports it):
     init_params.set_from_svo_file(svo_file_path)
     init_params.camera_resolution = sl.RESOLUTION.HD720  # 1280x720 resolution
     init_params.depth_mode = sl.DEPTH_MODE.ULTRA         # Ultra depth mode
@@ -60,45 +55,42 @@ def main():
     image_right = sl.Mat()
     depth = sl.Mat()
 
-    key_frame_interval = 25  # Save every 25th frame as key frame
     frame_id = 0
 
     print("Starting to grab frames...")
     while zed.grab() == sl.ERROR_CODE.SUCCESS:
         frame_id += 1
 
-        # Always retrieve the left image for video output
+        # Retrieve the left image for video output
         zed.retrieve_image(image_left, sl.VIEW.LEFT)
         left_img = image_left.get_data()
         left_img_bgr = cv2.cvtColor(left_img, cv2.COLOR_BGRA2BGR)
         video_writer.write(left_img_bgr)
 
-        # Process key frames for saving PNG images
-        if frame_id % key_frame_interval == 0:
-            # Get the timestamp (in seconds) for naming
-            timestamp = zed.get_timestamp(sl.TIME_REFERENCE.IMAGE).get_seconds()
-            timestamp_str = f"{timestamp:.3f}"  # Format to 3 decimal places
+        # Get the timestamp (in seconds) for naming
+        timestamp = zed.get_timestamp(sl.TIME_REFERENCE.IMAGE).get_seconds()
+        timestamp_str = f"{timestamp:.3f}"  # Format to 3 decimal places
 
-            # Retrieve right image and depth map for key frames
-            zed.retrieve_image(image_right, sl.VIEW.RIGHT)
-            zed.retrieve_measure(depth, sl.MEASURE.DEPTH)
+        # Retrieve right image and depth map for the current frame
+        zed.retrieve_image(image_right, sl.VIEW.RIGHT)
+        zed.retrieve_measure(depth, sl.MEASURE.DEPTH)
 
-            right_img = image_right.get_data()
-            depth_img = depth.get_data()
+        right_img = image_right.get_data()
+        depth_img = depth.get_data()
 
-            right_img_bgr = cv2.cvtColor(right_img, cv2.COLOR_BGRA2BGR)
+        right_img_bgr = cv2.cvtColor(right_img, cv2.COLOR_BGRA2BGR)
 
-            # Construct file names using the naming template: {sequence_id}_{timestamp}.png
-            left_filename = os.path.join(rgb_left_folder, f"{sequence_id}_{timestamp_str}.png")
-            right_filename = os.path.join(rgb_right_folder, f"{sequence_id}_{timestamp_str}.png")
-            depth_filename = os.path.join(depth_folder, f"{sequence_id}_{timestamp_str}.npy")
+        # Construct file names using the naming template: {sequence_id}_{timestamp}.png/.npy
+        left_filename = os.path.join(rgb_left_folder, f"{sequence_id}_{timestamp_str}.png")
+        right_filename = os.path.join(rgb_right_folder, f"{sequence_id}_{timestamp_str}.png")
+        depth_filename = os.path.join(depth_folder, f"{sequence_id}_{timestamp_str}.npy")
 
-            # Save key frame images
-            cv2.imwrite(left_filename, left_img_bgr)
-            cv2.imwrite(right_filename, right_img_bgr)
-            np.save(depth_filename, depth_img)
+        # Save images and depth map for the current frame
+        cv2.imwrite(left_filename, left_img_bgr)
+        cv2.imwrite(right_filename, right_img_bgr)
+        np.save(depth_filename, depth_img)
 
-            print(f"Saved key frame {frame_id} at timestamp {timestamp_str}")
+        print(f"Saved frame {frame_id} at timestamp {timestamp_str}")
 
     # Release resources
     video_writer.release()

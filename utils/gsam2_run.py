@@ -15,11 +15,11 @@ import matplotlib.pyplot as plt  # For colormap
 
 # --- Configuration Parameters ---
 TEXT_PROMPT = "bottle. cup. tilted bottle."  # Adjust as needed.
-RGB_FOLDER = "/home/archer/CERD_Model/dataset/pour_water_02/rgb_left"   # Folder containing RGB left images.
-DEPTH_FOLDER = "/home/archer/CERD_Model/dataset/pour_water_02/depth"     # Folder containing depth maps (npy files).
-OUTPUT_MASK_FOLDER = Path("outputs/grounded_sam2_local_demo")          # Where segmentation masks are saved.
+RGB_FOLDER = "/home/archer/code/CERD_Model/dataset/pour_water_02/rgb_left"   # Folder containing RGB left images.
+DEPTH_FOLDER = "/home/archer/code/CERD_Model/dataset/pour_water_02/depth"     # Folder containing depth maps (npy files).
+OUTPUT_MASK_FOLDER = Path("/home/archer/code/CERD_Model/dataset/pour_water_02/masks")        # Where segmentation masks are saved.
 OUTPUT_MASK_FOLDER.mkdir(parents=True, exist_ok=True)
-POINT_CLOUD_OUTPUT_FOLDER = Path("/home/archer/CERD_Model/dataset/pour_water_02/point_clouds")
+POINT_CLOUD_OUTPUT_FOLDER = Path("/home/archer/code/CERD_Model/dataset/pour_water_02/point_clouds")
 POINT_CLOUD_OUTPUT_FOLDER.mkdir(parents=True, exist_ok=True)
 
 SAM2_CHECKPOINT = "./checkpoints/sam2.1_hiera_large.pt"
@@ -32,7 +32,7 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DUMP_JSON_RESULTS = True
 
 # --- Load Camera Intrinsics ---
-calib_file = "/home/archer/CERD_Model/dataset/pour_water_02/calibration.json"
+calib_file = "/home/archer/code/CERD_Model/dataset/pour_water_02/calibration.json"
 with open(calib_file, "r") as f:
     calib = json.load(f)
 intrinsics = calib["intrinsic_left"]
