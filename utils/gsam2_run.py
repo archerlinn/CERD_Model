@@ -12,14 +12,16 @@ from sam2.build_sam import build_sam2
 from sam2.sam2_image_predictor import SAM2ImagePredictor
 from grounding_dino.groundingdino.util.inference import load_model, load_image, predict
 import matplotlib.pyplot as plt  # For colormap
+import imageio
 
 # --- Configuration Parameters ---
 TEXT_PROMPT = "bottle. cup. tilted bottle."  # Adjust as needed.
-RGB_FOLDER = "/home/archer/code/CERD_Model/dataset/pour_water_02/rgb_left"   # Folder containing RGB left images.
-DEPTH_FOLDER = "/home/archer/code/CERD_Model/dataset/pour_water_02/depth"     # Folder containing depth maps (npy files).
-OUTPUT_MASK_FOLDER = Path("/home/archer/code/CERD_Model/dataset/pour_water_02/masks")        # Where segmentation masks are saved.
+# Updated folder structure using the new dataset folder (pour_water_03)
+RGB_FOLDER = "/home/archer/cerd_data/pour_water_01/rgb_left"
+DEPTH_FOLDER = "/home/archer/cerd_data/pour_water_01/depth"
+OUTPUT_MASK_FOLDER = Path("/home/archer/cerd_data/pour_water_01/masks")
 OUTPUT_MASK_FOLDER.mkdir(parents=True, exist_ok=True)
-POINT_CLOUD_OUTPUT_FOLDER = Path("/home/archer/code/CERD_Model/dataset/pour_water_02/point_clouds")
+POINT_CLOUD_OUTPUT_FOLDER = Path("/home/archer/cerd_data/pour_water_01/point_clouds")
 POINT_CLOUD_OUTPUT_FOLDER.mkdir(parents=True, exist_ok=True)
 
 SAM2_CHECKPOINT = "./checkpoints/sam2.1_hiera_large.pt"
@@ -32,7 +34,7 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DUMP_JSON_RESULTS = True
 
 # --- Load Camera Intrinsics ---
-calib_file = "/home/archer/code/CERD_Model/dataset/pour_water_02/calibration.json"
+calib_file = "/home/archer/code/CERD_Model/dataset/pour_water_03/calibration.json"
 with open(calib_file, "r") as f:
     calib = json.load(f)
 intrinsics = calib["intrinsic_left"]
@@ -52,26 +54,20 @@ grounding_model = load_model(
 )
 
 # --- Helper Functions ---
-def debug_overlay_mask_on_depth(mask, depth_map, timestamp):
-    """Overlay mask on depth map to check alignment."""
-    plt.figure(figsize=(10, 5))
-    plt.subplot(1, 2, 1)
-    plt.imshow(depth_map, cmap='gray')
-    plt.title(f"Depth Map {timestamp}")
-    
-    plt.subplot(1, 2, 2)
-    plt.imshow(depth_map, cmap='gray')
-    plt.imshow(mask, cmap='jet', alpha=0.5)  # Overlay mask
-    plt.title(f"Overlayed Mask {timestamp}")
-    plt.colorbar()
-    plt.show()
-
 
 def extract_timestamp(filename):
-    # Assumes filename format: "pour_water_02_<timestamp>.png"
+    """
+    Assumes filename format: "pour_water_02_<timestamp>_<frameid>.png"
+    Returns the <timestamp> part as a string.
+    """
     base = os.path.basename(filename)
-    timestamp = base.replace("pour_water_02_", "").replace(".png", "")
-    return timestamp
+    # Remove the prefix "pour_water_02_"
+    remainder = base.replace("pour_water_02_", "")
+    # Now remainder should be like "22.123_01.png"
+    parts = remainder.split("_")
+    if len(parts) >= 2:
+        return parts[0]
+    return None
 
 def sanitize_label(label):
     """Sanitize object label for filenames (e.g., replace spaces with underscores)."""
@@ -80,7 +76,17 @@ def sanitize_label(label):
 def process_grounded_sam2_for_image(img_path):
     """Process one RGB image with Grounded SAM2 and save segmentation masks with object labels."""
     timestamp = extract_timestamp(img_path)
-    print(f"Processing image for timestamp: {timestamp}")
+    if timestamp is None:
+        print(f"Could not extract timestamp from {img_path}")
+        return None
+    # Assumes the filename already includes a frame id; we use it as is.
+    frame_id = os.path.splitext(os.path.basename(img_path))[0].split("_")[2]
+    print(f"Processing image for timestamp: {timestamp}, frame id: {frame_id}")
+    # Create subfolder for this timestamp under masks.
+    ts_int = int(float(timestamp))
+    mask_subfolder = OUTPUT_MASK_FOLDER / f"timestamp{ts_int}"
+    mask_subfolder.mkdir(exist_ok=True)
+    
     image_source, image = load_image(img_path)
     sam2_predictor.set_image(image_source)
     
@@ -102,7 +108,7 @@ def process_grounded_sam2_for_image(img_path):
         point_coords=None,
         point_labels=None,
         box=input_boxes,
-        multimask_output=False,  # Change to True if desired.
+        multimask_output=False,
     )
     if masks.ndim == 4:
         if masks.shape[1] == 3:
@@ -110,35 +116,27 @@ def process_grounded_sam2_for_image(img_path):
         elif masks.shape[1] == 1:
             masks = masks.squeeze(1)
     
-    # Ensure labels array matches masks
     if len(labels) != len(masks):
         print(f"WARNING: Number of detected labels ({len(labels)}) does not match number of masks ({len(masks)})")
     
-    # Save each segmentation mask with timestamp and label in filename.
     for i, (mask, label) in enumerate(zip(masks, labels)):
-        label_cleaned = sanitize_label(label)  # Make label filename-safe
+        label_cleaned = sanitize_label(label)
         mask_uint8 = (mask.astype(np.uint8)) * 255
         _, mask_uint8 = cv2.threshold(mask_uint8, 127, 255, cv2.THRESH_BINARY)
-
-        out_filename = os.path.join(OUTPUT_MASK_FOLDER, f"{timestamp}_mask_{label_cleaned}.png")
+        out_filename = os.path.join(mask_subfolder, f"{sequence_id}_{timestamp}_{frame_id}_mask_{label_cleaned}.png")
         cv2.imwrite(out_filename, mask_uint8)
         print(f"Saved segmentation mask: {out_filename}")
-
+    
     return timestamp
 
-
 def generate_point_cloud_from_mask(depth_map, mask, fx, fy, cx, cy):
-    # Resize mask to match depth map resolution.
     mask = cv2.resize(mask, (depth_map.shape[1], depth_map.shape[0]))
     print("DEBUG: Mask shape after resize:", mask.shape)
-    # (Optional) Debug: Visualize overlay of mask and depth map.
-
     ys, xs = np.where(mask > 0)
     print("DEBUG: Number of non-zero pixels in mask:", len(ys))
     if len(ys) == 0:
         print("WARNING: Mask has no non-zero pixels!")
         return np.empty((0, 3))
-    
     depths = depth_map[ys, xs]
     valid = depths > 0
     num_valid = np.count_nonzero(valid)
@@ -146,11 +144,9 @@ def generate_point_cloud_from_mask(depth_map, mask, fx, fy, cx, cy):
     if num_valid == 0:
         print("WARNING: No valid depth values found for masked region!")
         return np.empty((0, 3))
-    
     xs = xs[valid]
     ys = ys[valid]
     depths = depths[valid]
-    
     X = (xs - cx) * depths / fx
     Y = (ys - cy) * depths / fy
     Z = depths
@@ -180,64 +176,65 @@ def save_point_cloud(points, filename):
     print("DEBUG: Point cloud before downsampling has", np.asarray(pcd.points).shape[0], "points")
     pcd = pcd.voxel_down_sample(voxel_size=0.01)
     print("DEBUG: Point cloud after voxel downsampling has", np.asarray(pcd.points).shape[0], "points")
-    pcd = pcd.voxel_down_sample(voxel_size=0.01)
     pcd, ind = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
-    #pcd, ind = pcd.remove_radius_outlier(nb_points=16, radius=0.05)
     pcd = add_depth_colors_to_pcd(pcd)
     o3d.io.write_point_cloud(filename, pcd)
     print(f"Saved point cloud to {filename} with {np.asarray(pcd.points).shape[0]} points")
 
 def process_point_cloud_for_timestamp(timestamp):
-    depth_filename = os.path.join(DEPTH_FOLDER, f"pour_water_02_{timestamp}.npy")
-    print(f"DEBUG: Loading depth map from {depth_filename}")
-    try:
-        depth_map = np.load(depth_filename)
-        print("DEBUG: Loaded depth map with shape:", depth_map.shape)
-    except Exception as e:
-        print(f"ERROR: Could not load depth map {depth_filename}: {e}")
+    ts_int = int(float(timestamp))
+    depth_subfolder = os.path.join(DEPTH_FOLDER, f"timestamp{ts_int}")
+    mask_subfolder = os.path.join(OUTPUT_MASK_FOLDER, f"timestamp{ts_int}")
+    depth_files = [f for f in os.listdir(depth_subfolder) if f.startswith(f"{sequence_id}_{timestamp}_") and f.endswith(".npy")]
+    if not depth_files:
+        print(f"No depth files found for timestamp {timestamp} in {depth_subfolder}")
         return
-    
-    # Find segmentation masks for this timestamp.
-    segmentation_files = [f for f in os.listdir(OUTPUT_MASK_FOLDER) if f.startswith(timestamp) and f.endswith(".png")]
-    if not segmentation_files:
-        print(f"No segmentation masks found for timestamp {timestamp}")
-        return
-    for seg_file in segmentation_files:
-        mask_path = os.path.join(OUTPUT_MASK_FOLDER, seg_file)
-        print(f"DEBUG: Processing segmentation mask {mask_path}")
-        mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
-        if mask is None:
-            print(f"Warning: Could not load mask {mask_path}")
+    for depth_file in depth_files:
+        depth_filepath = os.path.join(depth_subfolder, depth_file)
+        print(f"DEBUG: Loading depth map from {depth_filepath}")
+        try:
+            depth_map = np.load(depth_filepath)
+            print("DEBUG: Loaded depth map with shape:", depth_map.shape)
+        except Exception as e:
+            print(f"ERROR: Could not load depth map {depth_filepath}: {e}")
             continue
-        
-        # Resize mask to match depth map dimensions.
-        mask = cv2.resize(mask, (depth_map.shape[1], depth_map.shape[0]))
-        print("DEBUG: Mask shape after resize:", mask.shape)
-        
-        print("DEBUG: Mask unique values before thresholding:", np.unique(mask))
-        _, mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
-        
-        # debug_overlay_mask_on_depth(mask, depth_map, timestamp)
-
-        # Increase kernel size and use morphological closing.
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
-        mask = cv2.dilate(mask, kernel, iterations=1)
-        print("DEBUG: Mask unique values after processing:", np.unique(mask))
-        
-        points = generate_point_cloud_from_mask(depth_map, mask, fx, fy, cx, cy)
-        if points.shape[0] == 0:
-            print(f"WARNING: No points generated for mask {mask_path}")
-        ply_filename = os.path.join(POINT_CLOUD_OUTPUT_FOLDER, f"{seg_file.replace('.png','.ply')}")
-        save_point_cloud(points, ply_filename)
+        parts = os.path.splitext(depth_file)[0].split("_")
+        if len(parts) < 3:
+            print(f"ERROR: Unexpected filename format for depth file: {depth_file}")
+            continue
+        frame_id = parts[2]
+        mask_prefix = f"{sequence_id}_{timestamp}_{frame_id}_"
+        segmentation_files = [f for f in os.listdir(mask_subfolder) if f.startswith(mask_prefix) and f.endswith(".png")]
+        if not segmentation_files:
+            print(f"No segmentation masks found for depth file {depth_file}")
+            continue
+        for seg_file in segmentation_files:
+            mask_path = os.path.join(mask_subfolder, seg_file)
+            print(f"DEBUG: Processing segmentation mask {mask_path}")
+            mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+            if mask is None:
+                print(f"Warning: Could not load mask {mask_path}")
+                continue
+            mask = cv2.resize(mask, (depth_map.shape[1], depth_map.shape[0]))
+            print("DEBUG: Mask shape after resize:", mask.shape)
+            _, mask = cv2.threshold(mask, 127, 255, cv2.THRESH_BINARY)
+            points = generate_point_cloud_from_mask(depth_map, mask, fx, fy, cx, cy)
+            if points.shape[0] == 0:
+                print(f"WARNING: No points generated for mask {mask_path}")
+            ply_filename = os.path.join(POINT_CLOUD_OUTPUT_FOLDER, seg_file.replace('.png', '.ply'))
+            save_point_cloud(points, ply_filename)
 
 # --- Batch Processing Pipeline ---
 
 # Step 1: Process all RGB left images with Grounded SAM2 to generate segmentation masks.
-rgb_files = [os.path.join(RGB_FOLDER, f) for f in os.listdir(RGB_FOLDER) if f.endswith(".png")]
-rgb_files.sort()
+rgb_subfolders = [os.path.join(RGB_FOLDER, d) for d in os.listdir(RGB_FOLDER) if os.path.isdir(os.path.join(RGB_FOLDER, d))]
+all_rgb_files = []
+for folder in rgb_subfolders:
+    files = [os.path.join(folder, f) for f in os.listdir(folder) if f.endswith(".png")]
+    all_rgb_files.extend(files)
+all_rgb_files.sort()
 timestamps = []
-for rgb_file in rgb_files:
+for rgb_file in all_rgb_files:
     print(f"Processing image: {rgb_file}")
     ts = process_grounded_sam2_for_image(rgb_file)
     if ts is not None:

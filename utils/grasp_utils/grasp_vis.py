@@ -7,15 +7,15 @@ import open3d as o3d
 
 # --- Configuration ---
 # File paths (update these with your actual file locations)
-HAND_FILE = "/home/archer/CERD_Model/hamer/demo_out/joints_npy/pour_water_02_1740349022.000_0_hand_3d.npy"
-OBJECT_FILE1 = "/home/archer/CERD_Model/dataset/pour_water_02/point_clouds/1740349022.000_1740349022.000_mask_0.ply"
-OBJECT_FILE2 = "/home/archer/CERD_Model/dataset/pour_water_02/point_clouds/1740349022.000_1740349022.000_mask_1.ply"
+HAND_FILE = "/home/archer/cerd_data/pour_water_01/hand/joints_npy/timestamp1740349029/pour_water_01_1740349029.000_21_0_hand_3d.npy"
+OBJECT_FILE1 = "/home/archer/cerd_data/pour_water_01/point_clouds/timestamp1740349029/pour_water_01_1740349029.000_21_mask_tilted_bottle.ply"
+OBJECT_FILE2 = "/home/archer/cerd_data/pour_water_01/point_clouds/timestamp1740349029/pour_water_01_1740349029.000_21_mask_cup.ply"
 
 # Manual offset (in millimeters) to be applied to the hand keypoints.
 MANUAL_OFFSET = np.array([40.0, 50.0, 300.0])  # [X, Y, Z]
 
 # Number of closest object points to use when computing the contact centroid.
-NUM_CLOSEST_POINTS = 50
+NUM_CLOSEST_POINTS = 5
 
 def load_hand_keypoints(file_path):
     """

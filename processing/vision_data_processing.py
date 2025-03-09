@@ -1,32 +1,30 @@
 import os
-import cv2
 import pyzed.sl as sl
 import numpy as np
+import imageio
 
 # Input SVO file path and output dataset folder
-svo_file_path = "/home/kma/CERD_Model/saved_svos/c_pour_water_2.svo2"
-output_folder = "/home/kma/CERD_Model/dataset/pour_water_02"
-sequence_id = "pour_water_02"  # Modify as needed for your session naming
+svo_file_path = "/home/archer/code/c_pour_water_2.svo2"
+output_folder = "/home/archer/cerd_data/pour_water_01"
+sequence_id = "pour_water_01"  # Modify as needed for your session naming
 
 def create_output_folders(base_folder):
     """
-    Creates output folders for left/right RGB images, depth maps, and video.
+    Creates main output folders for left RGB images, depth maps, and video.
     """
     rgb_left_folder = os.path.join(base_folder, "rgb_left")
-    rgb_right_folder = os.path.join(base_folder, "rgb_right")
     depth_folder = os.path.join(base_folder, "depth")
     video_folder = os.path.join(base_folder, "video")
 
     os.makedirs(rgb_left_folder, exist_ok=True)
-    os.makedirs(rgb_right_folder, exist_ok=True)
     os.makedirs(depth_folder, exist_ok=True)
     os.makedirs(video_folder, exist_ok=True)
 
-    return rgb_left_folder, rgb_right_folder, depth_folder, video_folder
+    return rgb_left_folder, depth_folder, video_folder
 
 def main():
-    # Create output folders and define video output path
-    rgb_left_folder, rgb_right_folder, depth_folder, video_folder = create_output_folders(output_folder)
+    # Create main output folders and define video output path
+    rgb_left_folder, depth_folder, video_folder = create_output_folders(output_folder)
     output_video_path = os.path.join(video_folder, f"{sequence_id}.mp4")
 
     # Initialize the ZED camera object
@@ -44,56 +42,82 @@ def main():
         print(f"Error opening SVO file: {err}")
         exit(1)
 
-    # Setup video writer for MP4 output (using left camera frames)
-    width, height = 1280, 720
-    fps = 30  # Adjust FPS as needed or retrieve via zed.get_camera_information().camera_fps
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    video_writer = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
+    # Setup video writer using imageio (requires imageio-ffmpeg)
+    fps = 30  # Adjust FPS as needed
+    video_writer = imageio.get_writer(output_video_path, fps=fps, codec='libx264')
 
     # Create sl.Mat objects to hold images and depth
     image_left = sl.Mat()
-    image_right = sl.Mat()
     depth = sl.Mat()
 
-    frame_id = 0
+    # Dictionary to keep track of frame counts for each timestamp (integer part)
+    frame_count_by_timestamp = {}
 
+    frame_id = 0
     print("Starting to grab frames...")
     while zed.grab() == sl.ERROR_CODE.SUCCESS:
         frame_id += 1
 
         # Retrieve the left image for video output
-        zed.retrieve_image(image_left, sl.VIEW.LEFT)
-        left_img = image_left.get_data()
-        left_img_bgr = cv2.cvtColor(left_img, cv2.COLOR_BGRA2BGR)
-        video_writer.write(left_img_bgr)
+        if zed.retrieve_image(image_left, sl.VIEW.LEFT) != sl.ERROR_CODE.SUCCESS:
+            print(f"Warning: Failed to retrieve left image at frame {frame_id}")
+            continue
+
+        # Convert the left image data to a proper NumPy array
+        left_img = np.array(image_left.get_data())
+        if left_img is None or left_img.size == 0:
+            print(f"Warning: Invalid left image data at frame {frame_id}, skipping...")
+            continue
+
+        # Convert BGRA to RGB: drop alpha channel and swap blue and red channels.
+        left_img_rgb = left_img[:, :, :3][:, :, ::-1]
+
+        # Append frame to video writer (imageio expects RGB images)
+        video_writer.append_data(left_img_rgb)
 
         # Get the timestamp (in seconds) for naming
         timestamp = zed.get_timestamp(sl.TIME_REFERENCE.IMAGE).get_seconds()
-        timestamp_str = f"{timestamp:.3f}"  # Format to 3 decimal places
+        timestamp_str = f"{timestamp:.3f}"  # Full timestamp string, e.g. "22.123"
+        # Use the integer part of the timestamp to create the subfolder name.
+        timestamp_int = int(timestamp)
+        subfolder_name = f"timestamp{timestamp_int}"
+        
+        # Create subfolders under each main category if they don't exist
+        left_subfolder = os.path.join(rgb_left_folder, subfolder_name)
+        depth_subfolder = os.path.join(depth_folder, subfolder_name)
+        os.makedirs(left_subfolder, exist_ok=True)
+        os.makedirs(depth_subfolder, exist_ok=True)
 
-        # Retrieve right image and depth map for the current frame
-        zed.retrieve_image(image_right, sl.VIEW.RIGHT)
-        zed.retrieve_measure(depth, sl.MEASURE.DEPTH)
+        # Update the frame counter for this timestamp
+        if timestamp_int not in frame_count_by_timestamp:
+            frame_count_by_timestamp[timestamp_int] = 1
+        else:
+            frame_count_by_timestamp[timestamp_int] += 1
+        # Format the frame id for this timestamp as two digits (starting from 01)
+        timestamp_frame_id = frame_count_by_timestamp[timestamp_int]
+        frame_id_str = f"{timestamp_frame_id:02d}"
 
-        right_img = image_right.get_data()
+        if zed.retrieve_measure(depth, sl.MEASURE.DEPTH) != sl.ERROR_CODE.SUCCESS:
+            print(f"Warning: Failed to retrieve depth measure at frame {frame_id}")
+            continue
+
         depth_img = depth.get_data()
+        if depth_img is None or depth_img.size == 0:
+            print(f"Warning: Invalid depth data at frame {frame_id}, skipping...")
+            continue
 
-        right_img_bgr = cv2.cvtColor(right_img, cv2.COLOR_BGRA2BGR)
+        # Construct file names with frame id for this timestamp
+        left_filename = os.path.join(left_subfolder, f"{sequence_id}_{timestamp_str}_{frame_id_str}.png")
+        depth_filename = os.path.join(depth_subfolder, f"{sequence_id}_{timestamp_str}_{frame_id_str}.npy")
 
-        # Construct file names using the naming template: {sequence_id}_{timestamp}.png/.npy
-        left_filename = os.path.join(rgb_left_folder, f"{sequence_id}_{timestamp_str}.png")
-        right_filename = os.path.join(rgb_right_folder, f"{sequence_id}_{timestamp_str}.png")
-        depth_filename = os.path.join(depth_folder, f"{sequence_id}_{timestamp_str}.npy")
-
-        # Save images and depth map for the current frame
-        cv2.imwrite(left_filename, left_img_bgr)
-        cv2.imwrite(right_filename, right_img_bgr)
+        # Save images and depth map
+        imageio.imwrite(left_filename, left_img_rgb)
         np.save(depth_filename, depth_img)
 
-        print(f"Saved frame {frame_id} at timestamp {timestamp_str}")
+        print(f"Saved frame {frame_id} (frame {frame_id_str} for timestamp {timestamp_int}) at timestamp {timestamp_str}")
 
     # Release resources
-    video_writer.release()
+    video_writer.close()
     zed.close()
     print("Finished processing SVO file.")
 
