@@ -34,7 +34,7 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 DUMP_JSON_RESULTS = True
 
 # --- Load Camera Intrinsics ---
-calib_file = "/home/archer/code/CERD_Model/dataset/pour_water_03/calibration.json"
+calib_file = "/home/archer/cerd_data/calibration.json"
 with open(calib_file, "r") as f:
     calib = json.load(f)
 intrinsics = calib["intrinsic_left"]
@@ -45,6 +45,7 @@ cy = intrinsics["cy"]
 print(f"Loaded intrinsics: fx={fx}, fy={fy}, cx={cx}, cy={cy}")
 
 # --- Initialize Models ---
+
 sam2_model = build_sam2(SAM2_MODEL_CONFIG, SAM2_CHECKPOINT, device=DEVICE)
 sam2_predictor = SAM2ImagePredictor(sam2_model)
 grounding_model = load_model(
@@ -55,18 +56,31 @@ grounding_model = load_model(
 
 # --- Helper Functions ---
 
-def extract_timestamp(filename):
-    """
-    Assumes filename format: "pour_water_02_<timestamp>_<frameid>.png"
-    Returns the <timestamp> part as a string.
-    """
+def extract_frame_id(filename):
     base = os.path.basename(filename)
-    # Remove the prefix "pour_water_02_"
-    remainder = base.replace("pour_water_02_", "")
-    # Now remainder should be like "22.123_01.png"
-    parts = remainder.split("_")
-    if len(parts) >= 2:
-        return parts[0]
+    # Remove the file extension and split by underscore.
+    parts = os.path.splitext(base)[0].split("_")
+    # Use the last part as the frame id.
+    return parts[-1]
+
+
+def extract_sequence_id(filename):
+    base = os.path.basename(filename)
+    parts = base.split("_")
+    if len(parts) >= 3:
+        # Join the first three parts to form the sequence id.
+        return "_".join(parts[:3])
+    return "default_sequence"
+
+
+def extract_timestamp(filename):
+    base = os.path.basename(filename)
+    parts = base.split("_")
+    if len(parts) >= 4:
+        timestamp = parts[3]
+        print(f"Extracted timestamp: {timestamp} from filename: {base}")
+        return timestamp
+    print(f"Failed to extract timestamp from {base}")
     return None
 
 def sanitize_label(label):
@@ -79,8 +93,11 @@ def process_grounded_sam2_for_image(img_path):
     if timestamp is None:
         print(f"Could not extract timestamp from {img_path}")
         return None
+
+    sequence_id = extract_sequence_id(img_path)
+
     # Assumes the filename already includes a frame id; we use it as is.
-    frame_id = os.path.splitext(os.path.basename(img_path))[0].split("_")[2]
+    frame_id = extract_frame_id(img_path)
     print(f"Processing image for timestamp: {timestamp}, frame id: {frame_id}")
     # Create subfolder for this timestamp under masks.
     ts_int = int(float(timestamp))
@@ -167,29 +184,49 @@ def add_depth_colors_to_pcd(pcd):
     pcd.colors = o3d.utility.Vector3dVector(colors)
     return pcd
 
-def save_point_cloud(points, filename):
+def save_point_cloud(points, filename, voxel_size=0.01):
     if points.shape[0] == 0:
         print(f"WARNING: No points to save for {filename}. Skipping point cloud generation.")
         return
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(points)
     print("DEBUG: Point cloud before downsampling has", np.asarray(pcd.points).shape[0], "points")
-    pcd = pcd.voxel_down_sample(voxel_size=0.01)
+    
+    try:
+        pcd = pcd.voxel_down_sample(voxel_size=voxel_size)
+    except RuntimeError as e:
+        print(f"WARNING: Skipping point cloud {filename} due to voxel_down_sample error: {e}")
+        return
+    
     print("DEBUG: Point cloud after voxel downsampling has", np.asarray(pcd.points).shape[0], "points")
+    
+    # Remove statistical outliers.
     pcd, ind = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
     pcd = add_depth_colors_to_pcd(pcd)
     o3d.io.write_point_cloud(filename, pcd)
     print(f"Saved point cloud to {filename} with {np.asarray(pcd.points).shape[0]} points")
 
+
 def process_point_cloud_for_timestamp(timestamp):
     ts_int = int(float(timestamp))
     depth_subfolder = os.path.join(DEPTH_FOLDER, f"timestamp{ts_int}")
     mask_subfolder = os.path.join(OUTPUT_MASK_FOLDER, f"timestamp{ts_int}")
-    depth_files = [f for f in os.listdir(depth_subfolder) if f.startswith(f"{sequence_id}_{timestamp}_") and f.endswith(".npy")]
+    # Create a corresponding point cloud subfolder.
+    point_cloud_subfolder = os.path.join(POINT_CLOUD_OUTPUT_FOLDER, f"timestamp{ts_int}")
+    os.makedirs(point_cloud_subfolder, exist_ok=True)
+    
+    # Select .npy files that include the given timestamp in their name.
+    depth_files = [f for f in os.listdir(depth_subfolder) if f.endswith(".npy") and f"_{timestamp}_" in f]
     if not depth_files:
         print(f"No depth files found for timestamp {timestamp} in {depth_subfolder}")
         return
+
     for depth_file in depth_files:
+        # Extract the sequence_id and frame_id from the depth file's name.
+        # Expected depth file format: "pour_water_01_1740349025.000_01.npy"
+        sequence_id = extract_sequence_id(depth_file)
+        frame_id = extract_frame_id(depth_file)
+        
         depth_filepath = os.path.join(depth_subfolder, depth_file)
         print(f"DEBUG: Loading depth map from {depth_filepath}")
         try:
@@ -198,16 +235,13 @@ def process_point_cloud_for_timestamp(timestamp):
         except Exception as e:
             print(f"ERROR: Could not load depth map {depth_filepath}: {e}")
             continue
-        parts = os.path.splitext(depth_file)[0].split("_")
-        if len(parts) < 3:
-            print(f"ERROR: Unexpected filename format for depth file: {depth_file}")
-            continue
-        frame_id = parts[2]
+
         mask_prefix = f"{sequence_id}_{timestamp}_{frame_id}_"
         segmentation_files = [f for f in os.listdir(mask_subfolder) if f.startswith(mask_prefix) and f.endswith(".png")]
         if not segmentation_files:
             print(f"No segmentation masks found for depth file {depth_file}")
             continue
+
         for seg_file in segmentation_files:
             mask_path = os.path.join(mask_subfolder, seg_file)
             print(f"DEBUG: Processing segmentation mask {mask_path}")
@@ -221,12 +255,18 @@ def process_point_cloud_for_timestamp(timestamp):
             points = generate_point_cloud_from_mask(depth_map, mask, fx, fy, cx, cy)
             if points.shape[0] == 0:
                 print(f"WARNING: No points generated for mask {mask_path}")
-            ply_filename = os.path.join(POINT_CLOUD_OUTPUT_FOLDER, seg_file.replace('.png', '.ply'))
-            save_point_cloud(points, ply_filename)
+                continue
+
+            # Save point cloud: use a larger voxel size to avoid the voxel_size error.
+            ply_filename = os.path.join(point_cloud_subfolder, seg_file.replace('.png', '.ply'))
+            save_point_cloud(points, ply_filename, voxel_size=0.05)
+
+
 
 # --- Batch Processing Pipeline ---
 
 # Step 1: Process all RGB left images with Grounded SAM2 to generate segmentation masks.
+
 rgb_subfolders = [os.path.join(RGB_FOLDER, d) for d in os.listdir(RGB_FOLDER) if os.path.isdir(os.path.join(RGB_FOLDER, d))]
 all_rgb_files = []
 for folder in rgb_subfolders:
