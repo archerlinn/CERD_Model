@@ -185,7 +185,7 @@ def extract_keyframes(df, vel_threshold=0.05, acc_threshold=0.02, grasp_threshol
 
 def main():
     input_csv = "/home/archer/cerd_data/pour_water_01/data.csv"            # Path to your input CSV file
-    output_csv_smoothed = "/home/archer/cerd_data/pour_water_01/keyframe_data.csv"  # Output CSV for smoothed trajectory
+    output_csv_smoothed = "/home/archer/cerd_data/pour_water_01/smoothed_data.csv"  # Output CSV for smoothed trajectory
     output_csv_keyframes = "/home/archer/cerd_data/pour_water_01/keyframe_only.csv" # Output CSV for key frames only
     
     df = load_data(input_csv)
