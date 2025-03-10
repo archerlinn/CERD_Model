@@ -1,208 +1,186 @@
+#!/usr/bin/env python3
 import numpy as np
 import pandas as pd
 from scipy.spatial.transform import Rotation as R, Slerp
 from scipy.interpolate import CubicSpline
-import matplotlib.pyplot as plt
 from scipy.signal import find_peaks
+import matplotlib.pyplot as plt
 
-def load_hand_trajectory(csv_path):
+def load_data(csv_path):
     """
-    Load hand trajectory data from a CSV file.
+    Load trajectory data from a CSV file.
     
     Expected CSV columns:
-      - time: Timestamps
-      - x, y, z: End-effector positions
-      - qx, qy, qz, qw: Quaternion orientation components
-      - gripper_width: Gripper state (0 for open, 1 for closed)
+      frame_id, sequence, timestamp, frame,
+      hand_x, hand_y, hand_z, hand_qx, hand_qy, hand_qz, hand_qw,
+      object_x, object_y, object_z, grasp_state, total_distance_mm
     """
     return pd.read_csv(csv_path)
 
-def compute_dynamics(positions, timestamps):
+def compute_dynamics(positions, frame_ids):
     """
-    Compute velocities and accelerations based on positions.
-    
-    Parameters:
-      positions (np.ndarray): Nx3 array of positions.
-      timestamps (np.ndarray): 1D array of time stamps.
-    
-    Returns:
-      velocities, accelerations (np.ndarray): Both are Nx3 arrays.
+    Compute velocities and accelerations with respect to frame_id.
     """
-    velocities = np.gradient(positions, timestamps, axis=0)
-    accelerations = np.gradient(velocities, timestamps, axis=0)
+    velocities = np.gradient(positions, frame_ids, axis=0)
+    accelerations = np.gradient(velocities, frame_ids, axis=0)
     return velocities, accelerations
 
-def identify_key_frames(timestamps, positions, gripper_states,
-                        vel_threshold=0.05, acc_threshold=0.02, 
-                        gripper_threshold=0.5):
+def identify_key_frames(frame_ids, positions, grasp_states,
+                        vel_threshold=0.05, acc_threshold=0.02, grasp_threshold=0.5):
     """
-    Identify key frames using local extrema of velocity, acceleration,
-    and changes in gripper state.
+    Identify key frame indices using local extrema in velocity, acceleration,
+    and changes in grasp state, with respect to frame_id.
+    
+    This function finds both peaks and troughs for velocity and acceleration.
     
     Parameters:
-      timestamps (np.ndarray): Array of time stamps.
-      positions (np.ndarray): Nx3 array of positions.
-      gripper_states (np.ndarray): 1D array of binary gripper state values (0 or 1).
-      vel_threshold (float): Minimum velocity magnitude to trigger a key frame.
-      acc_threshold (float): Minimum acceleration magnitude to trigger a key frame.
-      gripper_threshold (float): Threshold for detecting a gripper state change.
-                                Since states are binary, any change is significant.
-      
-    Returns:
-      key_frames (list): Sorted list of indices corresponding to key frames.
-    """
-    velocities, accelerations = compute_dynamics(positions, timestamps)
+      frame_ids (np.ndarray): 1D array of frame IDs.
+      positions (np.ndarray): Nx3 array of hand positions.
+      grasp_states (np.ndarray): 1D array of grasp state values.
+      vel_threshold (float): Minimum magnitude to consider a keyframe for velocity.
+      acc_threshold (float): Minimum magnitude to consider a keyframe for acceleration.
+      grasp_threshold (float): Threshold for detecting a change in grasp state.
     
-    # Compute the magnitude of velocity and acceleration
+    Returns:
+      Sorted list of indices that are key frames.
+    """
+    velocities, accelerations = compute_dynamics(positions, frame_ids)
     vel_norm = np.linalg.norm(velocities, axis=1)
     acc_norm = np.linalg.norm(accelerations, axis=1)
     
-    # Find peaks in the velocity and acceleration norms
+    # Find local peaks (maxima) and troughs (minima) for velocity and acceleration:
     vel_peaks, _ = find_peaks(vel_norm, height=vel_threshold)
+    vel_troughs, _ = find_peaks(-vel_norm, height=vel_threshold)
     acc_peaks, _ = find_peaks(acc_norm, height=acc_threshold)
+    acc_troughs, _ = find_peaks(-acc_norm, height=acc_threshold)
     
-    # Detect gripper state changes (since gripper_states are binary,
-    # a change is when the difference is non-zero)
-    gripper_diff = np.abs(np.diff(gripper_states, prepend=gripper_states[0]))
-    gripper_peaks, _ = find_peaks(gripper_diff, height=gripper_threshold)
+    # Detect grasp state changes
+    grasp_diff = np.abs(np.diff(grasp_states, prepend=grasp_states[0]))
+    grasp_peaks, _ = find_peaks(grasp_diff, height=grasp_threshold)
     
-    # Combine key indices from all criteria
-    key_indices = set()
-    key_indices.update(vel_peaks.tolist())
-    key_indices.update(acc_peaks.tolist())
-    key_indices.update(gripper_peaks.tolist())
-    
-    # Always include the first and last frame
+    key_indices = (set(vel_peaks.tolist()) | set(vel_troughs.tolist()) |
+                   set(acc_peaks.tolist()) | set(acc_troughs.tolist()) |
+                   set(grasp_peaks.tolist()))
+    # Always include first and last frame
     key_indices.add(0)
-    key_indices.add(len(timestamps) - 1)
+    key_indices.add(len(frame_ids)-1)
     
     return sorted(list(key_indices))
 
 def interpolate_quaternions(key_times, key_quaternions, new_times):
-    """
-    Interpolate quaternion values over new timestamps using SLERP.
-    
-    Parameters:
-      key_times (np.ndarray): Timestamps corresponding to key quaternions.
-      key_quaternions (np.ndarray): Nx4 array of key quaternions (qx, qy, qz, qw).
-      new_times (np.ndarray): Timestamps for the interpolated trajectory.
-      
-    Returns:
-      np.ndarray: Interpolated quaternions in (qx, qy, qz, qw) format.
-    """
+    """Interpolate quaternions using SLERP."""
     key_rotations = R.from_quat(key_quaternions)
     slerp = Slerp(key_times, key_rotations)
     target_rotations = slerp(new_times)
     return target_rotations.as_quat()
 
 def interpolate_positions(key_times, key_positions, new_times):
-    """
-    Interpolate positions using cubic spline interpolation.
-    
-    Parameters:
-      key_times (np.ndarray): Timestamps for key positions.
-      key_positions (np.ndarray): Nx3 array of key positions.
-      new_times (np.ndarray): Timestamps for the interpolated trajectory.
-      
-    Returns:
-      np.ndarray: Interpolated positions.
-    """
+    """Interpolate positions using cubic spline interpolation."""
     cs = CubicSpline(key_times, key_positions, axis=0)
     return cs(new_times)
 
-def interpolate_gripper(key_times, key_gripper, new_times):
-    """
-    Interpolate the gripper state as a step function.
-    For each new time, assign the gripper state from the most recent key frame.
-    
-    Parameters:
-      key_times (np.ndarray): Timestamps for key gripper states.
-      key_gripper (np.ndarray): 1D array of binary gripper state values.
-      new_times (np.ndarray): Timestamps for the interpolated trajectory.
-      
-    Returns:
-      np.ndarray: Interpolated binary gripper states.
-    """
-    # For each new time, find the index of the most recent key time
+def interpolate_step(key_times, key_values, new_times):
+    """Interpolate step-like values using zero-order hold."""
     indices = np.searchsorted(key_times, new_times, side='right') - 1
-    indices = np.clip(indices, 0, len(key_gripper)-1)
-    return key_gripper[indices]
+    indices = np.clip(indices, 0, len(key_values)-1)
+    return key_values[indices]
 
-def interpolate_trajectory(df, 
-                           vel_threshold=0.05, acc_threshold=0.02, gripper_threshold=0.5):
+def smooth_trajectory(df, vel_threshold=0.05, acc_threshold=0.02, grasp_threshold=0.5):
     """
-    Generate a smoothed trajectory from the original data by:
-      1. Selecting key frames based on motion dynamics and gripper state changes.
-      2. Interpolating positions, orientations, and gripper states between key frames.
-      
-    Parameters:
-      df (pd.DataFrame): DataFrame with columns ['time', 'x', 'y', 'z', 'qx', 'qy', 'qz', 'qw', 'gripper_width'].
-      vel_threshold (float): Threshold for velocity peak detection.
-      acc_threshold (float): Threshold for acceleration peak detection.
-      gripper_threshold (float): Threshold for gripper state change detection.
-      
-    Returns:
-      pd.DataFrame: New DataFrame containing the smoothed trajectory.
+    Generate a fully smoothed trajectory using keyframe-based interpolation.
+    The interpolation is computed over the entire frame_id grid.
+    
+    Returns a new DataFrame with the same number of rows and same columns as the input.
     """
-    timestamps = df["time"].values
-    positions = df[["x", "y", "z"]].values
-    quaternions = df[["qx", "qy", "qz", "qw"]].values
-    gripper_states = df["gripper_width"].values
+    # Use frame_id as the independent variable.
+    frame_ids = df["frame_id"].values.astype(float)
+    hand_positions = df[["hand_x", "hand_y", "hand_z"]].values.astype(float)
+    hand_quaternions = df[["hand_qx", "hand_qy", "hand_qz", "hand_qw"]].values.astype(float)
+    obj_positions = df[["object_x", "object_y", "object_z"]].values.astype(float)
+    grasp_states = df["grasp_state"].values.astype(float)
+    total_distance = df["total_distance_mm"].values.astype(float)
     
-    # Identify key frames using dynamics and gripper state changes
-    key_frame_indices = identify_key_frames(timestamps, positions, gripper_states,
-                                            vel_threshold, acc_threshold, gripper_threshold)
-    key_times = timestamps[key_frame_indices]
-    key_positions = positions[key_frame_indices]
-    key_quaternions = quaternions[key_frame_indices]
-    key_gripper = gripper_states[key_frame_indices]
+    # Identify key frame indices
+    key_indices = identify_key_frames(frame_ids, hand_positions, grasp_states,
+                                      vel_threshold, acc_threshold, grasp_threshold)
     
-    # Generate new, evenly spaced timestamps over the original time span
-    new_times = np.linspace(timestamps[0], timestamps[-1], num=len(timestamps))
+    key_times = frame_ids[key_indices]
+    key_hand_positions = hand_positions[key_indices]
+    key_hand_quaternions = hand_quaternions[key_indices]
+    key_obj_positions = obj_positions[key_indices]
+    key_grasp = grasp_states[key_indices]
+    key_total_distance = total_distance[key_indices]
     
-    # Interpolate positions, quaternions, and gripper state
-    smooth_positions = interpolate_positions(key_times, key_positions, new_times)
-    smooth_quaternions = interpolate_quaternions(key_times, key_quaternions, new_times)
-    smooth_gripper = interpolate_gripper(key_times, key_gripper, new_times)
+    new_times = frame_ids  # Use the original frame_id grid for interpolation
     
-    # Create a new DataFrame with the smoothed trajectory data
+    # Interpolate each component fully from the key frames:
+    smooth_hand_positions = interpolate_positions(key_times, key_hand_positions, new_times)
+    smooth_hand_quaternions = interpolate_quaternions(key_times, key_hand_quaternions, new_times)
+    smooth_obj_positions = interpolate_positions(key_times, key_obj_positions, new_times)
+    smooth_grasp = interpolate_step(key_times, key_grasp, new_times)
+    smooth_total_distance = interpolate_step(key_times, key_total_distance, new_times)
+    
+    # Build a new DataFrame preserving the original columns
     new_df = pd.DataFrame({
-        "time": new_times,
-        "x": smooth_positions[:, 0],
-        "y": smooth_positions[:, 1],
-        "z": smooth_positions[:, 2],
-        "qx": smooth_quaternions[:, 0],
-        "qy": smooth_quaternions[:, 1],
-        "qz": smooth_quaternions[:, 2],
-        "qw": smooth_quaternions[:, 3],
-        "gripper_width": smooth_gripper
+        "frame_id": df["frame_id"],
+        "sequence": df["sequence"],
+        "timestamp": df["timestamp"],
+        "frame": df["frame"],
+        "hand_x": smooth_hand_positions[:, 0],
+        "hand_y": smooth_hand_positions[:, 1],
+        "hand_z": smooth_hand_positions[:, 2],
+        "hand_qx": smooth_hand_quaternions[:, 0],
+        "hand_qy": smooth_hand_quaternions[:, 1],
+        "hand_qz": smooth_hand_quaternions[:, 2],
+        "hand_qw": smooth_hand_quaternions[:, 3],
+        "object_x": smooth_obj_positions[:, 0],
+        "object_y": smooth_obj_positions[:, 1],
+        "object_z": smooth_obj_positions[:, 2],
+        "grasp_state": smooth_grasp,
+        "total_distance_mm": smooth_total_distance
     })
-    
     return new_df
 
-if __name__ == "__main__":
-    input_csv = "hand_trajectory.csv"  # Update this path to your CSV file
-    output_csv = "smoothed_hand_trajectory.csv"
+def extract_keyframes(df, vel_threshold=0.05, acc_threshold=0.02, grasp_threshold=0.5):
+    """
+    Extract only the key frame rows from the DataFrame based on keyframe criteria.
+    """
+    frame_ids = df["frame_id"].values.astype(float)
+    hand_positions = df[["hand_x", "hand_y", "hand_z"]].values.astype(float)
+    grasp_states = df["grasp_state"].values.astype(float)
     
-    # Load the original hand trajectory data
-    df = load_hand_trajectory(input_csv)
+    key_indices = identify_key_frames(frame_ids, hand_positions, grasp_states,
+                                      vel_threshold, acc_threshold, grasp_threshold)
+    key_df = df.iloc[key_indices].reset_index(drop=True)
+    return key_df
+
+def main():
+    input_csv = "/home/archer/cerd_data/pour_water_01/data.csv"            # Path to your input CSV file
+    output_csv_smoothed = "/home/archer/cerd_data/pour_water_01/keyframe_data.csv"  # Output CSV file for smoothed trajectory
+    output_csv_keyframes = "/home/archer/cerd_data/pour_water_01/keyframe_only.csv" # Output CSV file for key frames only
     
-    # Generate the smoothed trajectory using refined keyframe criteria
-    smoothed_df = interpolate_trajectory(df,
-                                         vel_threshold=0.05,
-                                         acc_threshold=0.02,
-                                         gripper_threshold=0.5)
+    df = load_data(input_csv)
     
-    # Save the smoothed trajectory to a new CSV file
-    smoothed_df.to_csv(output_csv, index=False)
-    print(f"Smoothed trajectory saved to {output_csv}")
+    # Compute fully smoothed trajectory (all frames, interpolated from key frames)
+    smoothed_df = smooth_trajectory(df, vel_threshold=0.05, acc_threshold=0.02, grasp_threshold=0.5)
+    smoothed_df.to_csv(output_csv_smoothed, index=False)
+    print(f"Smoothed trajectory saved to {output_csv_smoothed}")
     
-    # Plot a comparison of original vs. smoothed X positions for verification
-    plt.figure(figsize=(12, 6))
-    plt.plot(df["time"], df["x"], label="Original X", alpha=0.5)
-    plt.plot(smoothed_df["time"], smoothed_df["x"], label="Smoothed X", linestyle="--")
-    plt.xlabel("Time")
-    plt.ylabel("Position X")
-    plt.title("Hand Position: Original vs. Smoothed")
+    # Extract only key frames from the original data
+    keyframes_df = extract_keyframes(df, vel_threshold=0.05, acc_threshold=0.02, grasp_threshold=0.5)
+    keyframes_df.to_csv(output_csv_keyframes, index=False)
+    print(f"Key frames saved to {output_csv_keyframes}")
+    
+    # Optional: Plot a comparison for one coordinate (hand_x) with key frames highlighted.
+    plt.figure(figsize=(12,6))
+    plt.plot(df["frame_id"], df["hand_x"], label="Original hand_x", alpha=0.5)
+    plt.plot(smoothed_df["frame_id"], smoothed_df["hand_x"], label="Smoothed hand_x", linestyle="--")
+    plt.scatter(keyframes_df["frame_id"], keyframes_df["hand_x"], color="red", label="Key frames", zorder=5)
+    plt.xlabel("Frame ID")
+    plt.ylabel("hand_x")
+    plt.title("Trajectory: Original vs. Smoothed vs. Key Frames")
     plt.legend()
     plt.show()
+
+if __name__ == "__main__":
+    main()
