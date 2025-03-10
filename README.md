@@ -1,11 +1,54 @@
-# CERD_Model (work in progress)
-Collect real world first-person perspective dataset designed for learning-based robotics manipulation at a low cost through computer vision model
+# CERD_Model (Work in Progress)
 
 ## Overview
-The **Human POV Manipulation Dataset** is a first-person perspective dataset designed for learning-based robotics manipulation at a low cost of collecting real-world data. It is captured using a **head-mounted ZED stereo camera**, providing **RGB, depth, and motion data** that are synchronized for **robotics learning, imitation learning, and vision-based control**.
+The **Human POV Manipulation Dataset** is a low-cost, real-world dataset for **robotics manipulation learning**. It is captured via a **head-mounted ZED stereo camera**, synchronizing **RGB, depth, and motion data** for **robotics learning, imitation learning, and vision-based control**.
+
+## CERD Pipeline
+To efficiently process and structure the dataset, we utilize the **CERD Pipeline**, which ensures high-quality data collection, preprocessing, and organization for machine learning applications.
+
+### 1. Collect Video
+Capture video using a **ZED stereo camera**.
+
+### 2. Crop Video
+Use `recordings/svo_crop.py` to extract the required portion of the recording.
+
+### 3. Process Frames
+Run `processing/vision_data_processing.py` to extract frames and generate:
+- **Depth files** (`.npy`)
+- **RGB images** (`.png`)
+- **Full video** (`.mp4`)
+
+### 4. Set Up GroundedSAM2 & Hamer
+Copy `gsam2_run.py` and `hamer_run.py` to their respective directories.
+
+### 5. Run GroundedSAM2
+Execute `gsam2_run.py` in the **Grounded-SAM-2** environment to generate:
+- **Masks** (`.png`) – for visualizing object segmentation
+- **Point clouds** (`.ply`) – for training and computing grasp states
+
+### 6. Run Hamer
+Execute `hamer_run.py` in the **Hamer** environment to extract:
+- **Hand/joints data** (`.csv`, `.npy`)
+- **Hand orientation data** (`.csv`, `.npy`)
+- **Visual representations**
+
+### 7. Compute Grasp State
+Run `utils/grasp_utils/grasp.py` to generate `grasp.csv`, which contains grasp state information per frame.
+
+### 8. Generate Dataset CSV
+Run `dataset_csv.py` to compile all frames into `data.csv`:
+```
+frame_id,sequence,timestamp,frame,hand_x,hand_y,hand_z,
+hand_qx,hand_qy,hand_qz,hand_qw,object_x,object_y,object_z,
+grasp_state,total_distance_mm
+```
+
+### 9. Extract Keyframes
+Run `keyframes_generate.py` to produce:
+- **`keyframe_only.csv`** – Extracted keyframes information
+- **`smoothed_data.csv`** – Smoothed trajectories based on extracted keyframes
 
 ## Dataset Information
-
 ```json
 {
     "dataset_name": "Human POV Manipulation Dataset",
@@ -22,19 +65,25 @@ The **Human POV Manipulation Dataset** is a first-person perspective dataset des
 ```
 
 ## Data Format and Structure
-Each recorded session is stored in a dedicated subfolder containing separate folders and files for **RGB images, depth maps, videos, and synchronized sensor data**.
+Each session is stored in a subfolder with RGB images, depth maps, videos, and computed data.
 
 ### File Structure
 ```
 📂 dataset/
+ ├── 📄 calibration.json       # Camera calibration parameters
  ├── 📂 Task_Name_SessionID/
- │   ├── 📂 rgb_left/         # RGB images from the left camera (1280x720)
- │   ├── 📂 rgb_right/        # RGB images from the right camera (1280x720)
- │   ├── 📂 depth/            # Depth maps corresponding to RGB frames
- │   ├── 📂 video/            # MP4 video of the manipulation task
- │   ├── 📄 info.json         # Metadata describing the task and objects
- │   ├── 📄 result.csv        # Time-synchronized motion data (hand, object, camera, world coordinates)
- │   ├── 📄 calibration.json  # Camera calibration parameters
+ │   ├── 📂 rgb_left/          # RGB images from the left camera (1280x720)
+ │   ├── 📂 depth/             # Depth maps corresponding to RGB frames
+ │   ├── 📂 video/             # MP4 video of the manipulation task
+ │   ├── 📂 hand/              # Hand meshes with joints, orientation, and visuals
+ │   ├── 📂 masks/             # Filtered object masks (.png) ordered by frames
+ │   ├── 📂 point_clouds/      # Filtered object point clouds (.ply) ordered by frames
+ │   ├── 📄 data.csv           # Raw data of combined hand trajectory, object position, and grasp_state
+ │   ├── 📄 grasp.csv          # Grasp state for each frames
+ │   ├── 📄 keyframe_only.csv  # Extracted keyframes data
+ │   ├── 📄 smoothed_data.csv  # Smoothed trajectory based on extracted keyframes
+ │   ├── 📄 world_pos.csv      # Computed world position of hands and objects
+
 ```
 
 ### Metadata Fields
@@ -69,19 +118,6 @@ python svo_recording.py --output_svo_file "C:\Users\arche\OneDrive\Desktop\cerd_
 ### Playback Video
 ```bash
 python svo_playback.py --input_svo_file "C:\Users\arche\OneDrive\Desktop\cerd_videos\Data\[name].svo2"
-```
-
-### Cutting Video
-Ensure the file is correct before trimming:
-```bash
-& "C:\Program Files (x86)\ZED SDK\tools\ZED SVOEditor.exe" -inf "[file_path]"
-```
-To cut a segment:
-```bash
-& "C:\Program Files (x86)\ZED SDK\tools\ZED SVOEditor.exe" -cut \
-"C:\Users\arche\OneDrive\Desktop\cerd_videos\Raw_SVO\raw_pour_water_2.svo2" \
--s [new start frame number] -e [new end frame number] \
-"C:\Users\arche\OneDrive\Desktop\cerd_videos\Data\pour_water_1.svo2"
 ```
 
 ## License
