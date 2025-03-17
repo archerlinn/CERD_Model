@@ -3,15 +3,15 @@ import csv
 import re
 
 # ------------- CONFIGURATION -------------
-GRASP_CSV_PATH = "/home/archer/cerd_data/pour_water_01/grasp.csv"  # Path to your grasp CSV file
+GRASP_CSV_PATH = "/home/archer/cerd_data/pour_water_07/grasp.csv"  # Path to your grasp CSV file
 
 # Define the start endpoint and end endpoint:
 # For example, to update from (timestamp=1740349022.000, frame=22) to (timestamp=1740349032.000, frame=25)
-START_TIMESTAMP = 1740349023.000
-START_FRAME     = 22
-END_TIMESTAMP   = 1740349023.000
-END_FRAME       = 29
-NEW_STATE       = "0"             # New grasp state ("0" or "1")
+START_TIMESTAMP = 1742181697.000
+START_FRAME     = 52
+END_TIMESTAMP   = 1742181702.000
+END_FRAME       = 8
+NEW_STATE       = "1"             # New grasp state ("0" or "1")
 
 # Regex pattern to extract sequence, timestamp, frame, and hand_side from hand_id.
 # Expected hand_id format: "pour_water_01_1740349022.000_22_0_hand_3d"

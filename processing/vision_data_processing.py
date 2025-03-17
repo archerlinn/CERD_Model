@@ -4,9 +4,9 @@ import numpy as np
 import imageio
 
 # Input SVO file path and output dataset folder
-svo_file_path = "/home/archer/code/c_pour_water_2.svo2"
-output_folder = "/home/archer/cerd_data/pour_water_01"
-sequence_id = "pour_water_01"  # Modify as needed for your session naming
+svo_file_path = "/home/archer/cerd_data/svo/pour_water_07.svo2"
+output_folder = "/home/archer/cerd_data/pour_water_07"
+sequence_id = "pour_water_07"  # Modify as needed for your session naming
 
 def create_output_folders(base_folder):
     """

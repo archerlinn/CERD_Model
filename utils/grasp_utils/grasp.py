@@ -29,9 +29,9 @@ import numpy as np
 import open3d as o3d
 
 # === Configuration Parameters ===
-HAND_KEYPOINTS_FOLDER = "/home/archer/cerd_data/pour_water_01/hand/joints_npy"
-OBJECT_PLY_FOLDER = "/home/archer/cerd_data/pour_water_01/point_clouds"
-OUTPUT_CSV = "/home/archer/cerd_data/pour_water_01/grasp.csv"
+HAND_KEYPOINTS_FOLDER = "/home/archer/cerd_data/pour_water_07/hand/joints_npy"
+OBJECT_PLY_FOLDER = "/home/archer/cerd_data/pour_water_07/point_clouds"
+OUTPUT_CSV = "/home/archer/cerd_data/pour_water_07/grasp.csv"
 
 SUM_THRESH = 100      # Sum threshold (in mm) for (d_thumb + d_candidate)
 NUM_CLOSEST_POINTS = 20  # Number of closest object points to compute each contact centroid

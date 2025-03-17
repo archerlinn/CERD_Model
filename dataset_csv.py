@@ -5,11 +5,11 @@ import csv
 from plyfile import PlyData
 
 # Specify the root directories and output CSV path here:
-joints_root = "/home/archer/cerd_data/pour_water_01/hand/joints_csv"          # Folder containing hand joints CSV files
-orientation_root = "/home/archer/cerd_data/pour_water_01/hand/orientation_csv"  # Folder containing hand orientation CSV files
-ply_root = "/home/archer/cerd_data/pour_water_01/point_clouds"                  # Folder containing object PLY files
-grasp_csv_path = "/home/archer/cerd_data/pour_water_01/grasp.csv"   # Grasp state CSV file
-output_csv = "/home/archer/cerd_data/pour_water_01/data.csv"          # Output CSV file
+joints_root = "/home/archer/cerd_data/pour_water_07/hand/joints_csv"          # Folder containing hand joints CSV files
+orientation_root = "/home/archer/cerd_data/pour_water_07/hand/orientation_csv"  # Folder containing hand orientation CSV files
+ply_root = "/home/archer/cerd_data/pour_water_07/point_clouds"                  # Folder containing object PLY files
+grasp_csv_path = "/home/archer/cerd_data/pour_water_07/grasp.csv"   # Grasp state CSV file
+output_csv = "/home/archer/cerd_data/pour_water_07/data.csv"          # Output CSV file
 
 # ------------- FILENAME PARSERS -------------
 def parse_joints_filename(filename):
