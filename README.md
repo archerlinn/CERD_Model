@@ -120,6 +120,10 @@ python svo_recording.py --output_svo_file "C:\Users\arche\OneDrive\Desktop\cerd_
 python svo_playback.py --input_svo_file "C:\Users\arche\OneDrive\Desktop\cerd_videos\Data\[name].svo2"
 ```
 
+### Cut Video
+```bash
+/usr/local/zed/tools/ZED_SVO_Editor -cut     "/home/archer/cerd_data/raw_svo/r_pour_water_07.svo2"     -s 100 -e 450     "/home/archer/cerd_data/svo/pour_water_07.svo2"
+```
 ## License
 This dataset is released under the **CC BY 4.0 License**. You are free to use, share, and adapt it as long as proper credit is given.
 
